@@ -45,16 +45,13 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/sha1"
+	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
 	"expvar"
 	"flag"
 	"fmt"
-	"github.com/hjson/hjson-go"
-	log "github.com/Sirupsen/logrus"
-	"github.com/robfig/cron"
-	"github.com/satori/go.uuid"
-	"encoding/json"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -64,57 +61,63 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"encoding/hex"
-	"strconv"
+
+	log "github.com/Sirupsen/logrus"
+	"github.com/hjson/hjson-go"
+	"github.com/robfig/cron"
+	"github.com/satori/go.uuid"
 )
 
 type Config struct {
-	Version			bool
-	ExpandMaxTcp	uint64
-	JsonLogging		bool
-	LogLevel		int
-	LogFilePath		string
+	Version      bool
+	ExpandMaxTcp uint64
+	JsonLogging  bool
+	LogLevel     int
+	LogFilePath  string
 
-	ListenPort		string
-	ListenTimeout	int
-	TlsCert			string
-	TlsKey			string
+	ListenPort    string
+	ListenTimeout int
+	TlsCert       string
+	TlsKey        string
 
-	TargetTimeout	int
-	TargetRewrite	bool
-	TargetInsecure	bool
+	TargetTimeout  int
+	TargetRewrite  bool
+	TargetInsecure bool
 
-	CloneTimeout	int
-	CloneRewrite	bool
-	CloneInsecure	bool
-	ClonePercent	float64
+	CloneTimeout  int
+	CloneRewrite  bool
+	CloneInsecure bool
+	ClonePercent  float64
 
 	MaxTotalHops int
 	MaxCloneHops int
 
-	Paths			map[string]map[string]interface{}
+	SkipCheck bool
+
+	Paths map[string]map[string]interface{}
 }
 
 const exclusionFlag = "!"
 
 var (
-	VERSION				string
-	minversion			string
-	version_str		  = "20180808.0 (cavanaug)"
+	VERSION     string
+	minversion  string
+	version_str = "20180808.0 (cavanaug)"
 
-	configData map[string]interface{}
-	config Config
-	cloneproxyHeader  = "X-Cloneproxy-Request"
-	sideServedheader  = "X-Cloneproxy-Served"
-	cloneproxyXFF	  = "X-Cloneproxy-XFF"
+	configData       map[string]interface{}
+	config           Config
+	cloneproxyHeader = "X-Cloneproxy-Request"
+	sideServedheader = "X-Cloneproxy-Served"
+	cloneproxyXFF    = "X-Cloneproxy-XFF"
 
-	configFile		  = flag.String("config-file", "config.hjson", "path to the hjson configuration file")
-	version			  = flag.Bool("version", false, VERSION)
-	help			  = flag.Bool("help", false, "displays this help message")
+	configFile = flag.String("config-file", "config.hjson", "path to the hjson configuration file")
+	version    = flag.Bool("version", false, VERSION)
+	help       = flag.Bool("help", false, "displays this help message")
 
 	total_matches     = expvar.NewInt("total_matches")
 	total_mismatches  = expvar.NewInt("total_mismatches")
@@ -122,7 +125,6 @@ var (
 	total_skipped     = expvar.NewInt("total_skipped")
 	t_origin          = time.Now()
 )
-
 
 func configuration(configFile string) {
 	raw, err := ioutil.ReadFile(configFile)
@@ -151,7 +153,7 @@ func configuration(configFile string) {
 // flushLoop() goroutine.
 var onExitFlushLoop func()
 
-type baseHandle struct {}
+type baseHandle struct{}
 
 // ReverseClonedProxy is an HTTP Handler that takes an incoming request and
 // sends it to another server, proxying the response back to the
@@ -237,7 +239,7 @@ var hopHeaders = []string{
 	"Upgrade",
 }
 
-func removeHeaders(body string, headers []string) (string) {
+func removeHeaders(body string, headers []string) string {
 	bodyString := body
 	for _, header := range headers {
 		bodyString = strings.Replace(bodyString, header, "", -1)
@@ -245,7 +247,7 @@ func removeHeaders(body string, headers []string) (string) {
 	return bodyString
 }
 
-func sha1Body(body []byte, headers []string) (string) {
+func sha1Body(body []byte, headers []string) string {
 	stringBody := string(body)
 	//stringBody = removeHeaders(stringBody, headers)
 	hasher := sha1.New()
@@ -285,7 +287,7 @@ func setCloneproxyHeader(reqHeader http.Header, outreq *http.Request) {
 	}
 }
 
-func setCloneproxyXFFHeader(outreq *http.Request) (string) {
+func setCloneproxyXFFHeader(outreq *http.Request) string {
 	xffHeader := getIP()
 	xff := outreq.Header.Get(cloneproxyXFF)
 	if xff != "" {
@@ -298,7 +300,7 @@ func setCloneproxyXFFHeader(outreq *http.Request) (string) {
 	return xffHeader
 }
 
-func getIP() (string) {
+func getIP() string {
 	// UDP doesn't have handshake or connection -- therefore, a connection is never established
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -509,7 +511,7 @@ func (p *ReverseClonedProxy) ServeTargetHTTP(rw http.ResponseWriter, req *http.R
 			"response_length": res_length,
 			"response_header": res.Header,
 			"response_body":   string(body),
-			"cloneproxy-xff": 	xffHeader,
+			"cloneproxy-xff":  xffHeader,
 		}).Debug("Proxy Response (loglevel)")
 	} else {
 		log.WithFields(log.Fields{
@@ -644,7 +646,7 @@ func (p *ReverseClonedProxy) ServeCloneHTTP(req *http.Request, uid uuid.UUID) (i
 			"response_length": res_length,
 			"response_header": res.Header,
 			"response_body":   string(body),
-			"cloneproxy-xff": 	xffHeader,
+			"cloneproxy-xff":  xffHeader,
 		}).Debug("Proxy Response (Details)")
 	} else {
 		log.WithFields(log.Fields{
@@ -730,7 +732,6 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 		}
 	}
 
-
 	// Initialize tracking vars
 	uid, _ := uuid.NewV4()
 	t := time.Now()
@@ -780,6 +781,8 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 	//        && random number is less than percent
 	duration := time.Since(t).Nanoseconds() / 1000000
 	switch {
+	case config.SkipCheck:
+		clone_statuscode, clone_contentlength, clone_sha1 = p.ServeCloneHTTP(clone_req, uid)
 	case target_statuscode < 500: // NON-SERVER ERROR
 		if makeCloneRequest && (config.ClonePercent == 100.0 || clone_random < config.ClonePercent) {
 			clone_statuscode, clone_contentlength, clone_sha1 = p.ServeCloneHTTP(clone_req, uid)
@@ -832,8 +835,8 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 			"b_response_code":   clone_statuscode,
 			"a_response_length": target_contentlength,
 			"b_response_length": clone_contentlength,
-			"a_sha1":			 target_sha1,
-			"b_sha1":			 clone_sha1,
+			"a_sha1":            target_sha1,
+			"b_sha1":            clone_sha1,
 			"duration":          duration,
 		}).Warn("CloneProxy Responses Mismatch")
 	} else {
@@ -845,9 +848,9 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 			"request_contentlength": req.ContentLength,
 			"response_code":         target_statuscode,
 			"response_length":       target_contentlength,
-			"sha1":					 target_sha1,
+			"sha1":                  target_sha1,
 			"duration":              duration,
-			"clone_request":		 makeCloneRequest,
+			"clone_request":         makeCloneRequest,
 		}).Info(infoSuccess)
 	}
 
@@ -1088,11 +1091,11 @@ func Rewrite(request string) (*url.URL, error) {
 		for _, rule := range rewriteRules {
 			configRewriteRules = append(configRewriteRules, rule.(string))
 		}
-		if len(configRewriteRules) % 2 != 0 || len(configRewriteRules) < 1 {
+		if len(configRewriteRules)%2 != 0 || len(configRewriteRules) < 1 {
 			return nil, fmt.Errorf("Error: rewrite rule mismatch\n	Each pattern must have a corresponding substitution\n")
 		}
 
-		for i := 0; i < len(configRewriteRules) - 1; i += 2 {
+		for i := 0; i < len(configRewriteRules)-1; i += 2 {
 			pattern, err := regexp.Compile(configRewriteRules[i])
 
 			if err != nil {
@@ -1188,22 +1191,22 @@ func main() {
 	flag.Usage = func() {
 		displayHelpMessage()
 	}
-//	flag.Usage = func() {
-//			   fmt.Fprintf(os.Stderr, "Version: %s\n\n", VERSION)
-//			   fmt.Fprintf(os.Stderr, "USAGE: %s [OPTIONS]\n\nOPTIONS:\n", os.Args[0])
-//			   flag.PrintDefaults()
-//			   fmt.Fprintf(os.Stderr, `
-//%s:
-//  HTTP_PROXY    proxy for HTTP requests; complete URL or HOST[:PORT]
-//                used for HTTPS requests if HTTPS_PROXY undefined
-//  HTTPS_PROXY   proxy for HTTPS requests; complete URL or HOST[:PORT]
-//  NO_PROXY      comma-separated list of hosts to exclude from proxy
-//`, "ENVIRONMENT")
-//			   fmt.Fprintf(os.Stderr, `
-//%s:
-//  WebSite       https://github.com/cavanaug/cloneproxy
-//`, "MISC")
-//	}
+	//	flag.Usage = func() {
+	//			   fmt.Fprintf(os.Stderr, "Version: %s\n\n", VERSION)
+	//			   fmt.Fprintf(os.Stderr, "USAGE: %s [OPTIONS]\n\nOPTIONS:\n", os.Args[0])
+	//			   flag.PrintDefaults()
+	//			   fmt.Fprintf(os.Stderr, `
+	//%s:
+	//  HTTP_PROXY    proxy for HTTP requests; complete URL or HOST[:PORT]
+	//                used for HTTPS requests if HTTPS_PROXY undefined
+	//  HTTPS_PROXY   proxy for HTTPS requests; complete URL or HOST[:PORT]
+	//  NO_PROXY      comma-separated list of hosts to exclude from proxy
+	//`, "ENVIRONMENT")
+	//			   fmt.Fprintf(os.Stderr, `
+	//%s:
+	//  WebSite       https://github.com/cavanaug/cloneproxy
+	//`, "MISC")
+	//	}
 	flag.Parse()
 
 	if *help {
@@ -1217,7 +1220,7 @@ func main() {
 	}
 
 	type Version struct {
-		Version string
+		Version   string
 		BuildDate string
 	}
 
@@ -1267,7 +1270,6 @@ func main() {
 	c := cron.New()
 	c.AddFunc("0 0/15 * * *", logStatus)
 	c.Start()
-
 
 	logStatus()
 	s := &http.Server{
