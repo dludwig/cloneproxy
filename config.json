@@ -1,0 +1,46 @@
+{
+    "Version": false,
+    "EnableRequestProfiling": true,
+    "ExpandMaxTcp": 4096,
+    "JsonLogging": true,
+    "LogLevel": 5,
+    "LogFilePath": "/home/jeff/Downloads/cloneproxy.log",
+    "ListenPort": ":8888",
+    "ListenTimeout": 900,
+    "TlsCert": "",
+    "TlsKey": "",
+    "MinVerTls": 1.0,
+    "TargetTimeout": 5,
+    "TargetRewrite": false,
+    "CloneTimeout": 5,
+    "CloneRewrite": false,
+    "ClonePercent": 100.0,
+    "MaxTotalHops": 2,
+    "MaxCloneHops": 1,
+    "Paths": {
+        "/project/iink/": {
+            "target": "http://localhost:8080",
+            "clone": "http://localhost:8081",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": false,
+            "rewriteRules": [
+                "\/",
+                "/test"
+            ],
+            "matchingRule": "/"
+        },
+        "/": {
+            "target": "https://localhost:8888/",
+            "clone": "https://localhost:8888/",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": false,
+            "rewriteRules": [
+                "\/",
+                "/test"
+            ],
+            "matchingRule": "/"
+        }
+    }
+}

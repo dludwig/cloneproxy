@@ -1,0 +1,82 @@
+{
+    "Version": false,
+    "EnableRequestProfiling": true,
+    "ExpandMaxTcp": 4096,
+    "JsonLogging": true,
+    "LogLevel": 5,
+    "LogFilePath": "/home/jeff/Downloads/cloneproxy.log",
+    "ListenPort": ":8888",
+    "ListenTimeout": 900,
+    "TlsCert": "",
+    "TlsKey": "",
+    "MinVerTls": 1.0,
+    "TargetTimeout": 5,
+    "TargetRewrite": false,
+    "CloneTimeout": 5,
+    "CloneRewrite": false,
+    "ClonePercent": 100.0,
+    "MaxTotalHops": 2,
+    "MaxCloneHops": 1,
+    "Paths": {
+        "/project/5AF308SDF093JF02/queues/wrong_queue_name": {
+            "target": "http://localhost:8080",
+            "clone": "/project/5AF308SDF093JF02/queues/wrong_queue_name",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": true,
+            "rewriteRules": [
+                "wrong_queue_name",
+                "right_queue_name"
+            ],
+            "matchingRule": "/"
+        },
+        "/localhost:8080": {
+            "target": "http://localhost:8080",
+            "clone": "/project/5AF308SDF093JF02/queues/wrong_queue_name",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": true,
+            "rewriteRules": [
+                "wrong_queue_name",
+                "right_queue_name"
+            ],
+            "matchingRule": "/"
+        },
+        "http://localhost:8081": {
+            "target": "http://localhost:8080",
+            "clone": "http://localhost:8081",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": true,
+            "rewriteRules": [
+                "wrong_queue_name",
+                "right_queue_name"
+            ],
+            "matchingRule": "/"
+        },
+        "/test": {
+            "target": "http://localhost:8080",
+            "clone": "http://localhost:8081",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": false,
+            "rewriteRules": [
+                "wrong_queue_name",
+                "right_queue_name"
+            ],
+            "matchingRule": "/"
+        },
+        "/hops": {
+            "target": "http://localhost:8888",
+            "clone": "http://localhost:8080",
+            "targetInsecure": false,
+            "cloneInsecure": false,
+            "rewrite": false,
+            "rewriteRules": [
+                "",
+                ""
+            ],
+            "matchingRule": "/"
+        }
+    }
+}

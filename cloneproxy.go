@@ -68,43 +68,14 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/hjson/hjson-go"
+	"github.com/mitchellh/go-homedir"
 	"github.com/robfig/cron"
 	uuid "github.com/satori/go.uuid"
+	"github.com/spf13/viper"
 
 	// profiling server
 	_ "net/http/pprof"
 )
-
-// Config represents cloneproxy's configuration file.
-type Config struct {
-	Version                bool
-	EnableRequestProfiling bool
-	ExpandMaxTCP           uint64
-	JSONLogging            bool
-	LogLevel               int
-	LogFilePath            string
-
-	ListenPort    string
-	ListenTimeout int
-	TLSCert       string
-	TLSKey        string
-	MinVerTLS     float64
-
-	TargetTimeout  int
-	TargetRewrite  bool
-	TargetInsecure bool
-
-	CloneTimeout  int
-	CloneRewrite  bool
-	CloneInsecure bool
-	ClonePercent  float64
-
-	MaxTotalHops int
-	MaxCloneHops int
-
-	Paths map[string]map[string]interface{}
-}
 
 var tlsConfig *tls.Config
 var tlsConn *tls.Conn
@@ -115,15 +86,13 @@ var (
 	// VERSION is the current version of cloneproxy.
 	VERSION    string
 	minversion string
-	build      = "20180808.0 (cavanaug)"
+	build      = "20180808.0"
 
-	configData       map[string]interface{}
-	config           Config
 	cloneproxyHeader = "X-Cloneproxy-Request"
 	sideServedheader = "X-Cloneproxy-Served"
 	cloneproxyXFF    = "X-Cloneproxy-XFF"
 
-	configFile = flag.String("config-file", "config.hjson", "path to the hjson configuration file")
+	configFile = flag.String("config-file", pathToConfig(), "path to the configuration file")
 	version    = flag.Bool("version", false, VERSION)
 	help       = flag.Bool("help", false, "displays this help message")
 
@@ -134,19 +103,25 @@ var (
 	timeOrigin       = time.Now()
 )
 
-func configuration(configFile string) {
-	raw, err := ioutil.ReadFile(configFile)
+func pathToConfig() string {
+	home, err := homedir.Dir()
 	if err != nil {
-		fmt.Printf("Error, missing %s file", configFile)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
-	hjson.Unmarshal(raw, &configData)
-	configJSON, err := json.Marshal(configData)
+	return fmt.Sprintf("%s/.cloneproxy/config.json", home)
+}
+
+func configuration(configFile string) {
+	viper.SetConfigType("json")
+	viper.SetConfigFile(configFile)
+
+	config, err := ioutil.ReadFile(configFile)
 	if err != nil {
-		log.Fatalf("%s is an invalid config file: %v", configFile, err)
+		log.Fatalf("Error, missing %s file", configFile)
 	}
-	json.Unmarshal(configJSON, &config)
+
+	viper.ReadConfig(bytes.NewBuffer(config))
 }
 
 // **********************************************************************************
@@ -269,7 +244,7 @@ func sha1Body(body []byte, headers []string) string {
 func getConfigPath(requestURI string) (string, error) {
 	allPathsMatch := false
 	var pathKey string
-	for path := range config.Paths {
+	for path := range viper.GetStringMapString("Paths") {
 		if requestURI == path {
 			pathKey = path
 			return pathKey, nil
@@ -323,11 +298,20 @@ func getIP() string {
 	return localAddr.String()
 }
 
+func getJSON(data []byte) map[string]interface{} {
+	object := map[string]interface{}{}
+	if err := json.Unmarshal(data, &object); err != nil {
+		log.Error(err)
+	}
+
+	return object
+}
+
 // Routes requests to appropriate ReverseCloneProxy handler
 func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestURI := r.RequestURI
 
-	if config.EnableRequestProfiling {
+	if viper.GetBool("EnableRequestProfiling") {
 		start := time.Now().UTC().UnixNano()
 		defer func() {
 			respTime := (time.Now().UTC().UnixNano() - start) / int64(time.Millisecond)
@@ -343,7 +327,7 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pathKey, err := getConfigPath(requestURI)
+	path, err := getConfigPath(requestURI)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusNotFound)
@@ -352,11 +336,11 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if targetClone, ok := config.Paths[pathKey]; ok {
-		configTargetURL := targetClone["target"].(string)
-		configCloneURL := targetClone["clone"].(string)
-		targetInsecure := targetClone["targetInsecure"].(bool)
-		cloneInsecure := targetClone["cloneInsecure"].(bool)
+	if targetClone, ok := viper.GetStringMapString("Paths")[path]; ok {
+		configTargetURL := getJSON([]byte(targetClone))["target"].(string)
+		configCloneURL := getJSON([]byte(targetClone))["clone"].(string)
+		targetInsecure := getJSON([]byte(targetClone))["targetInsecure"].(bool)
+		cloneInsecure := getJSON([]byte(targetClone))["cloneInsecure"].(bool)
 
 		targetURL := parseURLWithDefaults(configTargetURL)
 		cloneURL := parseURLWithDefaults(configCloneURL)
@@ -372,7 +356,16 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			os.Exit(1)
 		}
 
-		proxy := NewCloneProxy(targetURL, config.TargetTimeout, config.TargetRewrite, targetInsecure, cloneURL, config.CloneTimeout, config.CloneRewrite, cloneInsecure)
+		proxy := NewCloneProxy(
+			targetURL,
+			viper.GetInt("TargetTimeout"),
+			viper.GetBool("TargetRewrite"),
+			targetInsecure,
+			cloneURL,
+			viper.GetInt("CloneTimeout"),
+			viper.GetBool("CloneRewrite"),
+			cloneInsecure,
+		)
 		proxy.ServeHTTP(w, r)
 		return
 	}
@@ -536,7 +529,7 @@ func (p *ReverseClonedProxy) ServeTargetHTTP(rw http.ResponseWriter, req *http.R
 		// xff is present for target but not in clone and must be removed to do a proper comparison
 		"X-Forwarded-For: " + res.Request.Header["X-Forwarded-For"][0] + "\r\n",
 	}
-	if config.LogLevel > 4 {
+	if viper.GetInt("LogLevel") > 4 {
 		log.WithFields(log.Fields{
 			"uuid":            uid,
 			"side":            "A-Side",
@@ -670,7 +663,7 @@ func (p *ReverseClonedProxy) ServeCloneHTTP(req *http.Request, uid uuid.UUID) (i
 
 	var headersToRemove []string
 
-	if config.LogLevel > 4 {
+	if viper.GetInt("LogLevel") > 4 {
 		log.WithFields(log.Fields{
 			"uuid":            uid,
 			"side":            "B-Side",
@@ -747,7 +740,7 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 		return
 	}
 
-	if len(config.TLSKey) > 0 {
+	if len(viper.GetString("TLSKey")) > 0 {
 		if tlsConn != nil {
 			log.WithFields(log.Fields{
 				"ConnectionState": tlsConn.ConnectionState(),
@@ -755,7 +748,7 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 
 			log.WithFields(log.Fields{
 				"Connected with TLS Protocol": getTLSProtocol(tlsConn.ConnectionState().Version),
-				"Min TLS Protocol":            config.MinVerTLS,
+				"Min TLS Protocol":            viper.GetFloat64("MinVerTLS"),
 			}).Debug("TLS Info")
 		}
 	}
@@ -777,14 +770,14 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 	if targetServed != "" {
 		count, err := strconv.Atoi(targetServed)
 		if err == nil {
-			if count > config.MaxTotalHops {
+			if count > viper.GetInt("MaxTotalHops") {
 				log.WithFields(log.Fields{
 					"cloneproxied traffic count": targetServed,
 				}).Info("Cloneproxied traffic counter exceeds maximum at ", count)
 				fmt.Println("Cloneproxied traffic exceed maximum at:", targetServed)
 				return
 			}
-			if count >= config.MaxCloneHops {
+			if count >= viper.GetInt("MaxCloneHops") {
 				// only serve a-side (target)
 				makeCloneRequest = false
 			}
@@ -835,7 +828,7 @@ func (p *ReverseClonedProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request
 	duration := time.Since(t).Nanoseconds() / 1000000
 	switch {
 	case targetStatusCode < 500: // NON-SERVER ERROR
-		if makeCloneRequest && (config.ClonePercent == 100.0 || cloneRandom < config.ClonePercent) {
+		if makeCloneRequest && (viper.GetFloat64("ClonePercent") == 100.0 || cloneRandom < viper.GetFloat64("ClonePercent")) {
 			cloneStatusCode, cloneContentLength, cloneSHA1 = p.ServeCloneHTTP(cloneReq, uid)
 			// Ultra simple timing information for total of both a & b
 			duration = time.Since(t).Nanoseconds() / 1000000
@@ -1098,16 +1091,6 @@ func NewCloneProxy(target *url.URL, targetTimeout int, targetRewrite bool, targe
 	}
 }
 
-//func expvarVersion() interface{} {
-//	return build
-//}
-func init() {
-	//	expvar.Publish("version", expvar.Func(expvarVersion))
-	//	expvar.Publish("cmdline", Func(cmdline))
-	//	expvar.Publish("memstats", Func(memstats))
-	//	totalMatches.Set(0)
-	//	totalMismatches.Set(0)
-}
 func logStatus() {
 	log.WithFields(log.Fields{
 		"version":          build,
@@ -1128,7 +1111,7 @@ func increaseTCPLimits() {
 		fmt.Printf("Error: Initialization (%s)\n", err)
 		os.Exit(1)
 	}
-	rLimit.Cur = config.ExpandMaxTCP
+	rLimit.Cur = viper.GetUint64("ExpandMaxTCP")
 	err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
 	if err != nil {
 		fmt.Printf("Error: Initialization (%s)\n", err)
@@ -1137,17 +1120,19 @@ func increaseTCPLimits() {
 }
 
 func rewrite(request string) (*url.URL, error) {
-	pathKey, err := getConfigPath(request)
+	path, err := getConfigPath(request)
 
 	if err != nil {
 		return nil, err
 	}
 
-	configRewrite := config.Paths[pathKey]["rewrite"].(bool)
+	currentPath := viper.GetStringMapString("Paths")[path]
+	pathObj := getJSON([]byte(currentPath))
+	configRewrite := pathObj["rewrite"].(bool)
 	if configRewrite {
 		rewrite := request
 
-		rewriteRules := config.Paths[pathKey]["rewriteRules"].([]interface{})
+		rewriteRules := pathObj["rewriteRules"].([]interface{})
 		configRewriteRules := make([]string, 0, len(rewriteRules))
 		for _, rule := range rewriteRules {
 			configRewriteRules = append(configRewriteRules, rule.(string))
@@ -1173,14 +1158,16 @@ func rewrite(request string) (*url.URL, error) {
 
 // MatchingRule enforces the config's matching rules.
 func MatchingRule(request string) (bool, error) {
-	pathKey, err := getConfigPath(request)
+	path, err := getConfigPath(request)
 
 	if err != nil {
 		return false, err
 	}
 
-	configMatchingRule := config.Paths[pathKey]["matchingRule"].(string)
-	configCloneURL := config.Paths[pathKey]["clone"].(string)
+	currentPath := viper.GetStringMapString("Paths")[path]
+	pathObj := getJSON([]byte(currentPath))
+	configMatchingRule := pathObj["matchingRule"].(string)
+	configCloneURL := pathObj["clone"].(string)
 	if configMatchingRule != "" {
 		exclude := strings.Contains(configMatchingRule, exclusionFlag)
 		matchingRule := strings.TrimPrefix(configMatchingRule, exclusionFlag)
@@ -1279,14 +1266,14 @@ func main() {
 	fmt.Printf("%s\n\n", versionJSON)
 	configuration(*configFile)
 
-	if config.Version {
+	if viper.GetBool("Verison") {
 		fmt.Printf("cloneproxy version: %s\n", build)
 		os.Exit(0)
 	}
 
 	log.SetOutput(os.Stdout)
-	if config.LogFilePath != "" {
-		file, err := os.OpenFile(config.LogFilePath, os.O_CREATE|os.O_WRONLY, 0666)
+	if viper.GetString("LogFilePath") != "" {
+		file, err := os.OpenFile(viper.GetString("LogFilePath"), os.O_CREATE|os.O_WRONLY, 0666)
 		if err == nil {
 			multiWriter := io.MultiWriter(os.Stdout, file)
 			log.SetOutput(multiWriter)
@@ -1296,18 +1283,18 @@ func main() {
 		}
 	}
 	// Log as JSON instead of the default ASCII formatter
-	if config.JSONLogging {
+	if viper.GetBool("JSONLogging") {
 		log.SetFormatter(&log.JSONFormatter{})
 	}
 	// Set appropriate logging level
 	switch {
-	case config.LogLevel == 0:
+	case viper.GetInt("LogLevel") == 0:
 		log.SetLevel(log.ErrorLevel)
-	case config.LogLevel == 1:
+	case viper.GetInt("LogLevel") == 1:
 		log.SetLevel(log.WarnLevel)
-	case config.LogLevel == 2:
+	case viper.GetInt("LogLevel") == 2:
 		log.SetLevel(log.InfoLevel)
-	case config.LogLevel >= 3:
+	case viper.GetInt("LogLevel") >= 3:
 		log.SetLevel(log.DebugLevel)
 	}
 
@@ -1328,18 +1315,18 @@ func main() {
 	}()
 
 	s := &http.Server{
-		Addr:         config.ListenPort,
-		WriteTimeout: time.Duration(time.Duration(config.ListenTimeout) * time.Second),
-		ReadTimeout:  time.Duration(time.Duration(config.ListenTimeout) * time.Second),
+		Addr:         viper.GetString("ListenPort"),
+		WriteTimeout: time.Duration(time.Duration(viper.GetInt("ListenTimeout")) * time.Second),
+		ReadTimeout:  time.Duration(time.Duration(viper.GetInt("ListenTimeout")) * time.Second),
 		Handler:      &baseHandle{},
 		// TODO: Probably should add some denial of service max sizes etc...
 	}
-	if len(config.TLSKey) > 0 {
+	if len(viper.GetString("TLSKey")) > 0 {
 		var minVersion uint16
 		switch {
-		case config.MinVerTLS == 1.1:
+		case viper.GetFloat64("MinVerTLS") == 1.1:
 			minVersion = tls.VersionTLS11
-		case config.MinVerTLS == 1.2:
+		case viper.GetFloat64("MinVerTLS") == 1.2:
 			minVersion = tls.VersionTLS12
 		default:
 			minVersion = tls.VersionTLS10
@@ -1352,14 +1339,14 @@ func main() {
 		}
 
 		s := &http.Server{
-			Addr:         config.ListenPort,
-			WriteTimeout: time.Duration(time.Duration(config.ListenTimeout) * time.Second),
-			ReadTimeout:  time.Duration(time.Duration(config.ListenTimeout) * time.Second),
+			Addr:         viper.GetString("ListenPort"),
+			WriteTimeout: time.Duration(time.Duration(viper.GetInt("ListenTimeout")) * time.Second),
+			ReadTimeout:  time.Duration(time.Duration(viper.GetInt("ListenTimeout")) * time.Second),
 			Handler:      &baseHandle{},
 			TLSConfig:    tlsConfig,
 		}
 
-		log.Fatal(s.ListenAndServeTLS(config.TLSCert, config.TLSKey))
+		log.Fatal(s.ListenAndServeTLS(viper.GetString("TLSCert"), viper.GetString("TLSKey")))
 	} else {
 		log.Fatal(s.ListenAndServe())
 	}

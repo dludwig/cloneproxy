@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,25 +15,26 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hjson/hjson-go"
+	"github.com/spf13/viper"
 )
 
 var (
-	configFilename = "configTest.hjson"
+	configFilename = "configTest.json"
 )
 
 func populateConfig() {
-	raw, err := ioutil.ReadFile(configFilename)
+	viper.SetConfigType("json")
+	viper.SetConfigFile(configFilename)
+
+	config, err := ioutil.ReadFile(configFilename)
 	if err != nil {
-		fmt.Printf("Error, missing %s file", configFilename)
-		os.Exit(1)
+		log.Fatalf("Error, missing %s file", configFilename)
 	}
 
-	hjson.Unmarshal(raw, &configData)
-	configJSON, _ := json.Marshal(configData)
-	json.Unmarshal(configJSON, &config)
+	viper.ReadConfig(bytes.NewBuffer(config))
 }
 
+// TODO: rewrite rules should be an object, not an array, of {"pattern": "substitution"}
 func TestRewrite(t *testing.T) {
 	fmt.Println("========TESTING REWRITE========")
 	populateConfig()
