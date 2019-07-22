@@ -34,11 +34,6 @@ func populateConfig() {
 	viper.ReadConfig(bytes.NewBuffer(config))
 }
 
-func jsonToString(obj map[string]interface{}) string {
-	bytes, _ := json.Marshal(obj)
-	return string(bytes)
-}
-
 func updatePathsInConfig(route string, keyToUpdate string, valueToUse interface{}) map[string]interface{} {
 	// get the route to modify
 	var configPaths, configRoutePath = getConfigPaths(route)

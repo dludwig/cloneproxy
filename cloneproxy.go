@@ -235,10 +235,18 @@ func removeHeaders(body string, headers []string) string {
 
 func sha1Body(body []byte, headers []string) string {
 	stringBody := string(body)
-	//stringBody = removeHeaders(stringBody, headers)
 	hasher := sha1.New()
 	hasher.Write([]byte(stringBody))
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func getConfigPaths(route string) (map[string]interface{}, map[string]interface{}) {
+	configPaths := viper.Get("Paths").(map[string]interface{})
+	route = strings.ToLower(route)
+	if configPaths[route] == nil {
+		log.Fatalf("%v not in config", route)
+	}
+	return configPaths, configPaths[route].(map[string]interface{})
 }
 
 func getPathFromConfig(requestURI string) (string, error) {
@@ -300,20 +308,6 @@ func getIP() string {
 	return localAddr.String()
 }
 
-func getJSON(data []byte) map[string]interface{} {
-	object := map[string]interface{}{}
-	if err := json.Unmarshal(data, &object); err != nil {
-		log.Error(err)
-	}
-
-	return object
-}
-
-func getConfigPaths(route string) (map[string]interface{}, map[string]interface{}) {
-	var configPaths = viper.Get("Paths").(map[string]interface{})
-	return configPaths, configPaths[strings.ToLower(route)].(map[string]interface{})
-}
-
 // Routes requests to appropriate ReverseCloneProxy handler
 func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestURI := r.RequestURI
@@ -344,43 +338,36 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, targetClone := getConfigPaths(path)
-	if targetClone != nil {
-		configTargetURL := targetClone["target"].(string)
-		configCloneURL := targetClone["clone"].(string)
-		targetInsecure := targetClone["targetinsecure"].(bool)
-		cloneInsecure := targetClone["cloneinsecure"].(bool)
+	configTargetURL := targetClone["target"].(string)
+	configCloneURL := targetClone["clone"].(string)
+	targetInsecure := targetClone["targetinsecure"].(bool)
+	cloneInsecure := targetClone["cloneinsecure"].(bool)
 
-		targetURL := parseURLWithDefaults(configTargetURL)
-		cloneURL := parseURLWithDefaults(configCloneURL)
+	targetURL := parseURLWithDefaults(configTargetURL)
+	cloneURL := parseURLWithDefaults(configCloneURL)
 
-		if !strings.HasPrefix(configTargetURL, "http") && !strings.HasPrefix(configTargetURL, "https") {
-			fmt.Printf("Error: target url %s is invalid\n   URL's must have a scheme defined, either http or https\n\n", configTargetURL)
-			flag.Usage()
-			os.Exit(1)
-		}
-		if configCloneURL != "" && !strings.HasPrefix(configCloneURL, "http") && !strings.HasPrefix(configCloneURL, "https") {
-			fmt.Printf("Error: clone url %s is invalid\n   URL's must have a scheme defined, either http or https\n\n", configCloneURL)
-			flag.Usage()
-			os.Exit(1)
-		}
-
-		proxy := NewCloneProxy(
-			targetURL,
-			viper.GetInt("TargetTimeout"),
-			viper.GetBool("TargetRewrite"),
-			targetInsecure,
-			cloneURL,
-			viper.GetInt("CloneTimeout"),
-			viper.GetBool("CloneRewrite"),
-			cloneInsecure,
-		)
-		proxy.ServeHTTP(w, r)
-		return
+	if !strings.HasPrefix(configTargetURL, "http") && !strings.HasPrefix(configTargetURL, "https") {
+		fmt.Printf("Error: target url %s is invalid\n   URL's must have a scheme defined, either http or https\n\n", configTargetURL)
+		flag.Usage()
+		os.Exit(1)
+	}
+	if configCloneURL != "" && !strings.HasPrefix(configCloneURL, "http") && !strings.HasPrefix(configCloneURL, "https") {
+		fmt.Printf("Error: clone url %s is invalid\n   URL's must have a scheme defined, either http or https\n\n", configCloneURL)
+		flag.Usage()
+		os.Exit(1)
 	}
 
-	log.Println("Unable to process request for:", requestURI)
-	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]string{"error": "unable to process request"})
+	proxy := NewCloneProxy(
+		targetURL,
+		viper.GetInt("TargetTimeout"),
+		viper.GetBool("TargetRewrite"),
+		targetInsecure,
+		cloneURL,
+		viper.GetInt("CloneTimeout"),
+		viper.GetBool("CloneRewrite"),
+		cloneInsecure,
+	)
+	proxy.ServeHTTP(w, r)
 }
 
 // ServeTargetHTTP serves the http for the Target.
@@ -1147,24 +1134,6 @@ func rewrite(request string) (*url.URL, error) {
 			requestToRewrite = re.ReplaceAllString(requestToRewrite, substitution)
 		}
 
-		// configRewriteRules := make([]string, 0, len(rewriteRules))
-		// for _, rule := range rewriteRules {
-		// 	configRewriteRules = append(configRewriteRules, rule.(string))
-		// }
-		// if len(configRewriteRules)%2 != 0 || len(configRewriteRules) < 1 {
-		// 	return nil, fmt.Errorf("error: rewrite rule mismatch\n	Each pattern must have a corresponding substitution")
-		// }
-
-		// for i := 0; i < len(configRewriteRules)-1; i += 2 {
-		// 	pattern, err := regexp.Compile(configRewriteRules[i])
-
-		// 	if err != nil {
-		// 		return nil, fmt.Errorf("error: %s is an invalid regex, not rewriting URL", configRewriteRules[i])
-		// 	}
-
-		// 	rewrite = pattern.ReplaceAllString(rewrite, configRewriteRules[i+1])
-		// }
-
 		return url.Parse(requestToRewrite)
 	}
 	return nil, nil
@@ -1177,11 +1146,10 @@ func MatchingRule(request string) (bool, error) {
 		return false, err
 	}
 
-	currentPath := viper.Get("Paths").(map[string]interface{})
-	pathObj := currentPath[path].(map[string]interface{})
+	_, currentPath := getConfigPaths(path)
 
-	configMatchingRule := pathObj["matchingrule"].(string)
-	configCloneURL := pathObj["clone"].(string)
+	configMatchingRule := currentPath["matchingrule"].(string)
+	configCloneURL := currentPath["clone"].(string)
 	if configMatchingRule != "" {
 		exclude := strings.Contains(configMatchingRule, exclusionFlag)
 		matchingRule := strings.TrimPrefix(configMatchingRule, exclusionFlag)
