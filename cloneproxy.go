@@ -241,10 +241,12 @@ func sha1Body(body []byte, headers []string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func getConfigPath(requestURI string) (string, error) {
+func getPathFromConfig(requestURI string) (string, error) {
+	requestURI = strings.ToLower(requestURI)
 	allPathsMatch := false
 	var pathKey string
-	for path := range viper.GetStringMapString("Paths") {
+
+	for path := range viper.Get("Paths").(map[string]interface{}) {
 		if requestURI == path {
 			pathKey = path
 			return pathKey, nil
@@ -307,6 +309,11 @@ func getJSON(data []byte) map[string]interface{} {
 	return object
 }
 
+func getConfigPaths(route string) (map[string]interface{}, map[string]interface{}) {
+	var configPaths = viper.Get("Paths").(map[string]interface{})
+	return configPaths, configPaths[strings.ToLower(route)].(map[string]interface{})
+}
+
 // Routes requests to appropriate ReverseCloneProxy handler
 func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestURI := r.RequestURI
@@ -327,7 +334,7 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path, err := getConfigPath(requestURI)
+	path, err := getPathFromConfig(requestURI)
 	if err != nil {
 		log.Println(err)
 		w.WriteHeader(http.StatusNotFound)
@@ -336,11 +343,12 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if targetClone, ok := viper.GetStringMapString("Paths")[path]; ok {
-		configTargetURL := getJSON([]byte(targetClone))["target"].(string)
-		configCloneURL := getJSON([]byte(targetClone))["clone"].(string)
-		targetInsecure := getJSON([]byte(targetClone))["targetInsecure"].(bool)
-		cloneInsecure := getJSON([]byte(targetClone))["cloneInsecure"].(bool)
+	_, targetClone := getConfigPaths(path)
+	if targetClone != nil {
+		configTargetURL := targetClone["target"].(string)
+		configCloneURL := targetClone["clone"].(string)
+		targetInsecure := targetClone["targetinsecure"].(bool)
+		cloneInsecure := targetClone["cloneinsecure"].(bool)
 
 		targetURL := parseURLWithDefaults(configTargetURL)
 		cloneURL := parseURLWithDefaults(configCloneURL)
@@ -1120,53 +1128,59 @@ func increaseTCPLimits() {
 }
 
 func rewrite(request string) (*url.URL, error) {
-	path, err := getConfigPath(request)
-
+	path, err := getPathFromConfig(request)
 	if err != nil {
 		return nil, err
 	}
 
-	currentPath := viper.GetStringMapString("Paths")[path]
-	pathObj := getJSON([]byte(currentPath))
-	configRewrite := pathObj["rewrite"].(bool)
-	if configRewrite {
-		rewrite := request
+	_, currentPath := getConfigPaths(path)
+	if currentPath["rewrite"].(bool) {
+		requestToRewrite := request
 
-		rewriteRules := pathObj["rewriteRules"].([]interface{})
-		configRewriteRules := make([]string, 0, len(rewriteRules))
-		for _, rule := range rewriteRules {
-			configRewriteRules = append(configRewriteRules, rule.(string))
-		}
-		if len(configRewriteRules)%2 != 0 || len(configRewriteRules) < 1 {
-			return nil, fmt.Errorf("error: rewrite rule mismatch\n	Each pattern must have a corresponding substitution")
-		}
-
-		for i := 0; i < len(configRewriteRules)-1; i += 2 {
-			pattern, err := regexp.Compile(configRewriteRules[i])
-
+		rewriteRules := currentPath["rewriterules"].(map[string]string)
+		for pattern, substitution := range rewriteRules {
+			re, err := regexp.Compile(pattern)
 			if err != nil {
-				return nil, fmt.Errorf("error: %s is an invalid regex, not rewriting URL", configRewriteRules[i])
+				return nil, fmt.Errorf("error: %s is an invalid regex, not rewriting URL", pattern)
 			}
 
-			rewrite = pattern.ReplaceAllString(rewrite, configRewriteRules[i+1])
+			requestToRewrite = re.ReplaceAllString(requestToRewrite, substitution)
 		}
 
-		return url.Parse(rewrite)
+		// configRewriteRules := make([]string, 0, len(rewriteRules))
+		// for _, rule := range rewriteRules {
+		// 	configRewriteRules = append(configRewriteRules, rule.(string))
+		// }
+		// if len(configRewriteRules)%2 != 0 || len(configRewriteRules) < 1 {
+		// 	return nil, fmt.Errorf("error: rewrite rule mismatch\n	Each pattern must have a corresponding substitution")
+		// }
+
+		// for i := 0; i < len(configRewriteRules)-1; i += 2 {
+		// 	pattern, err := regexp.Compile(configRewriteRules[i])
+
+		// 	if err != nil {
+		// 		return nil, fmt.Errorf("error: %s is an invalid regex, not rewriting URL", configRewriteRules[i])
+		// 	}
+
+		// 	rewrite = pattern.ReplaceAllString(rewrite, configRewriteRules[i+1])
+		// }
+
+		return url.Parse(requestToRewrite)
 	}
 	return nil, nil
 }
 
 // MatchingRule enforces the config's matching rules.
 func MatchingRule(request string) (bool, error) {
-	path, err := getConfigPath(request)
-
+	path, err := getPathFromConfig(request)
 	if err != nil {
 		return false, err
 	}
 
-	currentPath := viper.GetStringMapString("Paths")[path]
-	pathObj := getJSON([]byte(currentPath))
-	configMatchingRule := pathObj["matchingRule"].(string)
+	currentPath := viper.Get("Paths").(map[string]interface{})
+	pathObj := currentPath[path].(map[string]interface{})
+
+	configMatchingRule := pathObj["matchingrule"].(string)
 	configCloneURL := pathObj["clone"].(string)
 	if configMatchingRule != "" {
 		exclude := strings.Contains(configMatchingRule, exclusionFlag)
@@ -1266,7 +1280,7 @@ func main() {
 	fmt.Printf("%s\n\n", versionJSON)
 	configuration(*configFile)
 
-	if viper.GetBool("Verison") {
+	if viper.GetBool("Version") {
 		fmt.Printf("cloneproxy version: %s\n", build)
 		os.Exit(0)
 	}

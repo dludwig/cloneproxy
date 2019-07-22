@@ -24,10 +24,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": false,
-            "rewriteRules": [
-                "\/",
-                "/test"
-            ],
+            "rewriteRules": {
+                "\/": "/test"
+            },
             "matchingRule": "/"
         },
         "/": {
@@ -36,10 +35,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": false,
-            "rewriteRules": [
-                "\/",
-                "/test"
-            ],
+            "rewriteRules": {
+                "\/": "/test"
+            },
             "matchingRule": "/"
         }
     }

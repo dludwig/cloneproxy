@@ -24,10 +24,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": true,
-            "rewriteRules": [
-                "wrong_queue_name",
-                "right_queue_name"
-            ],
+            "rewriteRules": {
+                "wrong_queue_name": "right_queue_name"
+            },
             "matchingRule": "/"
         },
         "/localhost:8080": {
@@ -36,10 +35,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": true,
-            "rewriteRules": [
-                "wrong_queue_name",
-                "right_queue_name"
-            ],
+            "rewriteRules": {
+                "wrong_queue_name": "right_queue_name"
+            },
             "matchingRule": "/"
         },
         "http://localhost:8081": {
@@ -48,10 +46,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": true,
-            "rewriteRules": [
-                "wrong_queue_name",
-                "right_queue_name"
-            ],
+            "rewriteRules": {
+                "wrong_queue_name": "right_queue_name"
+            },
             "matchingRule": "/"
         },
         "/test": {
@@ -60,10 +57,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": false,
-            "rewriteRules": [
-                "wrong_queue_name",
-                "right_queue_name"
-            ],
+            "rewriteRules": {
+                "wrong_queue_name": "right_queue_name"
+            },
             "matchingRule": "/"
         },
         "/hops": {
@@ -72,10 +68,9 @@
             "targetInsecure": false,
             "cloneInsecure": false,
             "rewrite": false,
-            "rewriteRules": [
-                "",
-                ""
-            ],
+            "rewriteRules": {
+                "": ""
+            },
             "matchingRule": "/"
         }
     }
