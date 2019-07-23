@@ -72,6 +72,7 @@ import (
 	"github.com/robfig/cron"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
+	"github.com/urfave/cli"
 
 	// profiling server
 	_ "net/http/pprof"
@@ -84,17 +85,17 @@ const exclusionFlag = "!"
 
 var (
 	// VERSION is the current version of cloneproxy.
-	VERSION    string
+	VERSION string
+	// formatted datetime during build.
 	minversion string
-	build      = "20180808.0"
+	// the commit this binary was built from.
+	build string
+	// the go version running this binary.
+	goVersion = runtime.Version()
 
 	cloneproxyHeader = "X-Cloneproxy-Request"
 	sideServedheader = "X-Cloneproxy-Served"
 	cloneproxyXFF    = "X-Cloneproxy-XFF"
-
-	configFile = flag.String("config-file", pathToConfig(), "path to the configuration file")
-	version    = flag.Bool("version", false, VERSION)
-	help       = flag.Bool("help", false, "displays this help message")
 
 	totalMatches     = expvar.NewInt("totalMatches")
 	totalMismatches  = expvar.NewInt("totalMismatches")
@@ -121,7 +122,9 @@ func configuration(configFile string) {
 		log.Fatalf("Error, missing %s file", configFile)
 	}
 
-	viper.ReadConfig(bytes.NewBuffer(config))
+	if err = viper.ReadConfig(bytes.NewBuffer(config)); err != nil {
+		log.Fatal(err)
+	}
 }
 
 // **********************************************************************************
@@ -1169,89 +1172,118 @@ func MatchingRule(request string) (bool, error) {
 	return true, nil
 }
 
-func displayHelpMessage() {
-	// global configuration variables
-	enableRequestProfiling := "(boolean) Logs the time taken to process a request (in ms)."
-	expandMaxTCP := "(int) Set the maximum tcp sockets for use."
-	jsonLogging := "(boolean) Write out the logs in JSON."
-	logLevel := "(int) Set the verbosity of logging, from 0 to 5.  A higher level results in more logged information.\n\t\t\t0=Error, 1=Warning, 2=Info, 3=Debug, 4=Verbose, 5=VerboseDebug. Set to at least 1 to be notified for mismatches.\n" +
-		"\t\t\tError:\tLogs 5XX response codes and unfufilled a and/or b side requests.\n\t\t\tWarn:\tLogs when the a and b side responses do not match (may be expected).\n\t\t\tInfo:\tLogs when a and b side responses match and when the number of cloneproxy hops exceeds a specified maximum.\n\t\t\t\t(default value of 2)" +
-		"\n\t\t\tDebug:\tLogs request fields for a and b side\n\t\t\tVerbose: Logs response fields for a and b side\n\t\t\tVerboseDebug: Logs response fields (including body) for a and b side."
-	logFilePath := "(string) Where to write the logs.  Leave empty if you don't want to write the logs to disk."
-	listenPort := "(:int) The port where cloneproxy listens for requests (default value of :8888)."
-	listenTimeout := "(int) Enforced client timeout. The number of seconds from the end of the request header read to the end of the response write."
-	tlsCert := "(string) The path to the TLS certificate file (must also provide the TLS key)(optional field)."
-	tlsKey := "(string) The path to the TLS private key file (optional field)."
-	MinVerTLS := "(float64) The minimum version of TLS to support - up to TLS1.2 (optional field - defaults to TLS1.0)."
-	targetTimeout := "(int) Enforced timeout in seconds for a-side traffic."
-	targetRewrite := "(boolean) Set to rewrite the host header when proxying a-side traffic."
-	cloneTimeout := "(int) Enforced timeout in seconds for b-side traffic."
-	cloneRewrite := "(boolean) Set to rewrite the host header when proxing b-side traffic."
-	clonePercent := "(float64) The percentage of traffic to send to b-side."
-	maxTotalHops := "(int) The maximum number of cloneproxied requests to serve, where a cloneproxied request is a request from another cloneproxy instance.\n\t\t\tAny cloneproxied requests strictly exceeding this will be dropped. Meant to prevent cloneproxy request loops."
-	maxCloneHops := "(int) The maximum number of cloneproxied requests to serve for the b-side. Any cloneproxied requests greater than or equal to this will not serve the b-side."
-
-	// path configuration variables
-	target := "(string) The a-side URL. Typically the original/intended destination."
-	clone := "(string) The b-side URL."
-	targetInsecure := "(boolean) Insecure SSL validation for target (a-Side) traffic."
-	cloneInsecure := "(boolean) Insecure SSL validation for clone (b-Side) traffic."
-	rewrite := "(boolean) Set if you want to rewrite the clone (b-side) URL"
-	rewriteRules := "(array of strings) Specify the pattern to match in the URI and what should be substituted in its place.\n\t\t\tEach pattern must have an accompanying substitution and vice versa.  Pattern-Substitution rules are handled sequentially"
-	matchingRule := "(string/regex) Specifies whether to send to the clone (b-side) based on the path.\n\t\t\tSend to b-side if empty '' or if the path matches the specified pattern.\n\t\t\tPrefix '!' to pattern if you want to send to the b-side only if the path doesn't match a pattern."
-
-	fmt.Fprintf(os.Stderr, "Version: %s\n\n", VERSION)
-
-	fmt.Fprintf(os.Stderr, "USAGE: %s [OPTIONS]\n\nOPTIONS:\n", os.Args[0])
-	flag.PrintDefaults()
-	fmt.Fprintln(os.Stderr)
-
-	fmt.Fprintln(os.Stderr, "CONFIGURATION:")
-	fmt.Fprintln(os.Stderr, "  NOTE: cloneproxy assumes all variables have been properly set in the configuration file (unless otherwise specified, cloneproxy looks in the current directory for a file named 'config.hjson').")
-	fmt.Fprintln(os.Stderr, "  Furthermore, config.hjson should contain all the information necessary to get up and running.  The information provided in config.hjson has been reproduced here for convenience.")
-	fmt.Fprintln(os.Stderr)
-
-	fmt.Fprintf(os.Stderr, "  Global Configurations:\n\tEnableRequestProfiling:\t%s\n\tExpandMaxTcp:\t%s\n\tJsonLogging:\t%s\n\tLogLevel:\t%s\n\tLogFilePath:\t%s\n\tListenPort\t%s\n\tListenTimeout:\t%s\n\tTlsCert:\t%s\n\tTlsKey:\t\t%s\n\tMinVerTls:\t%s\n\tTargetTimeout:\t%s\n\tTargetRewrite:\t%s\n\tCloneTimeout:\t%s\n\tCloneRewrite:\t%s\n\tClonePercent:\t%s\n\tMaxTotalHops:\t%s\n\tMaxCloneHops:\t%s\n\t",
-		enableRequestProfiling, expandMaxTCP, jsonLogging, logLevel, logFilePath, listenPort, listenTimeout, tlsCert, tlsKey, MinVerTLS, targetTimeout, targetRewrite, cloneTimeout, cloneRewrite, clonePercent, maxTotalHops, maxCloneHops)
-	fmt.Fprintln(os.Stderr)
-
-	fmt.Fprintf(os.Stderr, "  Per Path Configurations:\n\ttarget:\t\t%s\n\tclone:\t\t%s\n\ttargetInsecure:\t%s\n\tcloneInsecure:\t%s\n\trewrite:\t%s\n\trewriteRules:\t%s\n\tmatchingRule:\t%s\n\t",
-		target, clone, targetInsecure, cloneInsecure, rewrite, rewriteRules, matchingRule)
+func flags() []cli.Flag {
+	return []cli.Flag{
+		cli.StringFlag{
+			Name:  "config",
+			Usage: "The path to the config file.",
+			Value: "config.json",
+		},
+		cli.BoolFlag{
+			Name:  "profile, p",
+			Usage: "Logs the time taken to process a request (in ms). EnableRequestProfiling in the config.",
+		},
+		cli.IntFlag{
+			Name:  "max-tcp",
+			Usage: "Set the maxium TCP sockets for use. ExpandMaxTcp in the config.",
+			Value: 4096,
+		},
+		cli.BoolFlag{
+			Name:  "json",
+			Usage: "Write JSON-encoded logs. JsonLogging in the config.",
+		},
+		cli.IntFlag{
+			Name: "log-level",
+			Usage: `Set the verbosity of logging, from 0 (error) to 5 (VerboseDebug). A higher level results in more logged information. LogLevel in the config.
+	0=Error, 1=Warn, 2=Info, 3=Debug, 4=Verbose, 5=VerboseDeub. Set to at least 1 to be notified of mismatches.
+			(0)        Error: 	Logs 5xx response codes and unfulfilled a and/or b-side requests.
+			(1)         Warn:  	0 logging + logs when the a and b-side response codes do not match (may be expected).
+			(2)         Info:  	1 and below logging + logs when a and b-side response code match and when the number of cloneproxy hops exceeds the specified maximum.
+			(3)        Debug: 	2 and below logging + logs the request fields for a and b-side.
+			(4)      Verbose:	3 and below logging + logs response fields for a and b-side.
+			(5) VerboseDebug:	4 and below logging + logs response body for a and b-side.`,
+			Value: 2,
+		},
+		cli.StringFlag{
+			Name:  "log-file",
+			Usage: "Where to write the logs. Set to the empty string \"\" if you don't want to write logs to disk. LogFilePath in the config.",
+		},
+		cli.IntFlag{
+			Name:  "port",
+			Usage: "The port where cloneproxy listens for requests. ListenPort in the config.",
+			Value: 8888,
+		},
+		cli.IntFlag{
+			Name:  "timeout",
+			Usage: "Enforced client timeout. The number of seconds from the end of the request header read to the end of the response write. ListenTimeout in the config.",
+			Value: 900,
+		},
+		cli.StringFlag{
+			Name:  "tls-cert",
+			Usage: "The path to the TLS certificate file (must also provide the TLS key). TlsCert in the config.",
+		},
+		cli.StringFlag{
+			Name:  "tls-key",
+			Usage: "The path to the TLS private key file. TlsKey in the config.",
+		},
+		cli.Float64Flag{
+			Name:  "min-tls-ver",
+			Usage: "The minimum version of TLS to support - up to TLS1.2. MinVerTls in the config.",
+			Value: 1.0,
+		},
+		cli.IntFlag{
+			Name:  "target-timeout",
+			Usage: "Enforced timeout in seconds for a-side traffic. TargetTimeout in the config.",
+			Value: 5,
+		},
+		cli.BoolFlag{
+			Name:  "target-rewrite",
+			Usage: "Set to rewrite the host header when proxying a-side traffic. TargetRewrite in the config.",
+		},
+		cli.IntFlag{
+			Name:  "clone-timeout",
+			Usage: "Enforced timeout in seconds for b-side traffic. CloneTimeout in the config.",
+			Value: 5,
+		},
+		cli.BoolFlag{
+			Name:  "clone-rewrite",
+			Usage: "Set to rewrite the host header when proxing b-side traffic. CloneRewrite in the config.",
+		},
+		cli.Float64Flag{
+			Name:  "clone-percent",
+			Usage: "The percentage of traffic to send to b-side. ClonePercent in the config.",
+			Value: 100.0,
+		},
+		cli.IntFlag{
+			Name: "max-hops",
+			Usage: `The maximum number of 'cloneproxied' requests to serve, where a 'cloneproxied' request is a request from another cloneproxy instance.
+	Any 'cloneproxied' requests strictly exceeding this will be dropped. Meant to prevent cloneproxy request loops. MaxTotalHops in the config.`,
+			Value: 2,
+		},
+		cli.IntFlag{
+			Name: "max-clone-hops",
+			Usage: `The maximum number of 'cloneproxied' requests to serve for the b-side. Any 'cloneproxied' requests greater than or equal to this will not serve the b-side.
+	MaxCloneHops in the config.`,
+			Value: 1,
+		},
+	}
 }
 
-func main() {
-	// Handle Option Processing
-	flag.Usage = func() {
-		displayHelpMessage()
+func parseFlags(ctx *cli.Context) {
+	for _, flagName := range ctx.GlobalFlagNames() {
+		if ctx.GlobalIsSet(flagName) {
+			// set for current session, but don't save
+			viper.Set(flagName, ctx.GlobalGeneric(flagName))
+		}
 	}
+}
 
-	flag.Parse()
+func startServer(ctx *cli.Context) error {
+	// load the config file
+	configuration(ctx.GlobalString("config"))
 
-	if *help {
-		displayHelpMessage()
-		return
-	}
-
-	if *version {
-		fmt.Printf("Version: %s\tBuild Date: %s\n", VERSION, minversion)
-		return
-	}
-
-	type Version struct {
-		Version   string
-		BuildDate string
-	}
-
-	versionStruct := Version{VERSION, minversion}
-	versionJSON, _ := json.Marshal(versionStruct)
-
-	fmt.Printf("%s\n\n", versionJSON)
-	configuration(*configFile)
-
-	if viper.GetBool("Version") {
-		fmt.Printf("cloneproxy version: %s\n", build)
-		os.Exit(0)
-	}
+	// global options take precedent over the config file
+	parseFlags(ctx)
 
 	log.SetOutput(os.Stdout)
 	if viper.GetString("LogFilePath") != "" {
@@ -1280,7 +1312,6 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	// Begin actual main function
 	increaseTCPLimits()
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 
@@ -1331,5 +1362,31 @@ func main() {
 		log.Fatal(s.ListenAndServeTLS(viper.GetString("TLSCert"), viper.GetString("TLSKey")))
 	} else {
 		log.Fatal(s.ListenAndServe())
+	}
+
+	return nil
+}
+
+func main() {
+	app := cli.NewApp()
+	app.Name = "cloneproxy"
+	app.Usage = "A reverse proxy with a forking of traffic to a clone."
+	app.Description = `You can proxy traffic to production & staging simultaneously.
+	 This can be used for development/testing/benchmarking, it can
+	 also be used to replicate traffic while moving across clouds.`
+	app.Version = fmt.Sprintf("v%v-%v build %v %v", VERSION, minversion, build, goVersion)
+	app.Flags = flags()
+
+	// Begin actual main function
+	app.Commands = []cli.Command{
+		cli.Command{
+			Name:   "run",
+			Usage:  "start cloneproxy",
+			Action: startServer,
+		},
+	}
+
+	if err := app.Run(os.Args); err != nil {
+		log.Fatal(err)
 	}
 }
