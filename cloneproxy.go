@@ -1208,10 +1208,10 @@ func flags() []cli.Flag {
 			Name:  "log-file",
 			Usage: "Where to write the logs. Set to the empty string \"\" if you don't want to write logs to disk. LogFilePath in the config.",
 		},
-		cli.IntFlag{
+		cli.StringFlag{
 			Name:  "port",
 			Usage: "The port where cloneproxy listens for requests. ListenPort in the config.",
-			Value: 8888,
+			Value: ":8888",
 		},
 		cli.IntFlag{
 			Name:  "timeout",
@@ -1269,11 +1269,31 @@ func flags() []cli.Flag {
 	}
 }
 
+var flagToConfigMap = map[string]string{
+	"profile":        "EnableRequestProfiling",
+	"max-tcp":        "ExpandMaxTcp",
+	"json":           "JsonLogging",
+	"log-level":      "LogLevel",
+	"log-file":       "LogFilePath",
+	"port":           "ListenPort",
+	"timeout":        "ListenTimeout",
+	"tls-cert":       "TlsCert",
+	"tls-key":        "TlsKey",
+	"min-tls-ver":    "MinVerTls",
+	"target-timeout": "TargetTimeout",
+	"target-rewrite": "TargetRewrite",
+	"clone-timeout":  "CloneTimeout",
+	"clone-rewrite":  "CloneRewrite",
+	"clone-percent":  "ClonePercent",
+	"max-hops":       "MaxTotalHops",
+	"max-clone-hops": "MaxCloneHops",
+}
+
 func parseFlags(ctx *cli.Context) {
 	for _, flagName := range ctx.GlobalFlagNames() {
-		if ctx.GlobalIsSet(flagName) {
+		if ctx.GlobalIsSet(flagName) && flagName != "config" {
 			// set for current session, but don't save
-			viper.Set(flagName, ctx.GlobalGeneric(flagName))
+			viper.Set(flagToConfigMap[flagName], ctx.GlobalGeneric(flagName))
 		}
 	}
 }
@@ -1296,10 +1316,12 @@ func startServer(ctx *cli.Context) error {
 			fmt.Print("Failed to log to file, using default stderr")
 		}
 	}
+
 	// Log as JSON instead of the default ASCII formatter
 	if viper.GetBool("JSONLogging") {
 		log.SetFormatter(&log.JSONFormatter{})
 	}
+
 	// Set appropriate logging level
 	switch {
 	case viper.GetInt("LogLevel") == 0:
@@ -1376,15 +1398,7 @@ func main() {
 	 also be used to replicate traffic while moving across clouds.`
 	app.Version = fmt.Sprintf("v%v-%v build %v %v", VERSION, minversion, build, goVersion)
 	app.Flags = flags()
-
-	// Begin actual main function
-	app.Commands = []cli.Command{
-		cli.Command{
-			Name:   "run",
-			Usage:  "start cloneproxy",
-			Action: startServer,
-		},
-	}
+	app.Action = startServer
 
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)

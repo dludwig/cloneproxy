@@ -7,7 +7,7 @@ BUILD=$(shell git rev-parse HEAD)
 LDFLAGS=-ldflags "-X main.VERSION=${VERSION} -X main.minversion=${MINVERSION} -X main.build=${BUILD}"
 
 install:
-	go get -d ./...
+	go get ./...
 
 release:
 	env GOOS=linux GOARCH=amd64 go build ${LDFLAGS} -o build/${BINARY} ${BINARY}.go
